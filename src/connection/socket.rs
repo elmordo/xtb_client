@@ -4,6 +4,7 @@ use thiserror::Error;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{connect, WebSocket, Error as TungsteniteError, Message};
 use url::{Url, ParseError};
+use rxrust::prelude::*;
 
 /// Hold configuration for Socket
 pub struct SocketConfig {
@@ -21,14 +22,17 @@ pub struct SocketConfig {
 pub struct Socket {
     /// Underlying tungstenite socket connection
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
+    message_feeder: Subject<'_, Message, SocketError>,
 }
 
 
 impl Socket {
     pub fn new(config: SocketConfig) -> Result<Self, SocketError> {
         let socket = Self::make_socket(config)?;
+        let message_feeder: Subject<Message, SocketError> = Subject::default();
         Ok(Self {
-            socket
+            socket,
+            message_feeder,
         })
     }
 
