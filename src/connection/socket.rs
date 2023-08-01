@@ -19,6 +19,7 @@ pub struct SocketConfig {
 }
 
 
+/// Socket wrapper for tungstenite socket
 pub struct Socket {
     /// Underlying tungstenite socket connection
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
@@ -26,6 +27,7 @@ pub struct Socket {
 
 
 impl Socket {
+    /// Create new socket from config
     pub fn new(config: SocketConfig) -> Result<Self, SocketError> {
         let socket = Self::make_socket(config)?;
         Ok(Self {
@@ -33,8 +35,18 @@ impl Socket {
         })
     }
 
+    /// Send message
     pub fn send(&mut self, message: Message) -> Result<(), SocketError> {
         self.socket.send(message).map_err(|err| SocketError::UnableToSendMessage(err))
+    }
+
+    /// Receive message
+    pub fn receive(&mut self) -> Result<Option<Message>, SocketError> {
+        self.socket.read().map(|val| Some(val)).or_else(|err| {
+            match err {
+                _ => Err(SocketError::SocketReadFail)
+            }
+        })
     }
 
     fn make_socket(config: SocketConfig) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, SocketError> {
@@ -73,6 +85,8 @@ pub enum SocketError {
     UnableToSendMessage(TungsteniteError),
     #[error("Unable to set timeout")]
     UnableToSetTimeout,
+    #[error("Read from socket failed")]
+    SocketReadFail,
 }
 
 

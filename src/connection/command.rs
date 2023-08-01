@@ -4,13 +4,13 @@ use thiserror::Error;
 
 /// Represent XTB API command
 #[derive(Clone, Serialize)]
-pub struct Command<T: Serialize> {
+pub struct Command<Arg: Serialize> {
     /// Command name
     /// See http://developers.xstore.pro/documentation/ for available commands
     pub command: String,
 
     /// Arguments
-    pub arguments: Option<T>,
+    pub arguments: Option<Arg>,
 
     /// Custom tag used to identify responses
     pub custom_tag: Option<String>,
@@ -22,14 +22,14 @@ pub struct Command<T: Serialize> {
 
 
 /// Type alias for command responses
-pub type CommandResult<T: Deserialize> = Result<CommandOk<T>, CommandError>;
+pub type CommandResult<Data> = Result<CommandOk<Data>, CommandError>;
 
 
 /// Represent response when command was successful
 #[derive(Clone, Deserialize)]
-pub struct CommandOk<T: Deserialize> {
+pub struct CommandOk<Data> {
     /// Returned data
-    return_data: Option<T>,
+    return_data: Option<Data>,
 
     /// Custom tag used for response identification
     custom_tag: Option<String>,
@@ -50,7 +50,7 @@ pub struct CommandError {
 
 /// Error codes of XTB API
 /// See http://developers.xstore.pro/documentation/#error-messages
-#[derive(Debug, Error, Deserialize)]
+#[derive(Clone, Debug, Error, Deserialize)]
 pub enum XtbErrorCode {
     #[error("Invalid price")]
     BE001,
