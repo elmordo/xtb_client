@@ -1,9 +1,12 @@
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use std::thread::JoinHandle;
+use serde::Serialize;
 
+use serde_json::Error as SerdeError;
 use thiserror::Error;
 use tungstenite::Message;
+use crate::connection::command::Command;
 
 use crate::connection::socket::{Socket, SocketError};
 use crate::connection::SocketConfig;
@@ -22,6 +25,19 @@ impl ServerConnection {
             api_service,
             stream_api_service,
         })
+    }
+
+    pub fn send_command<T: Serialize>(&mut self, command: Command<T>) -> Result<(), ServerConnectionError> {
+        let is_streaming = command.stream_session_id.is_some();
+        let payload = serde_json::to_string(&command)?;
+        let message = Message::from(payload);
+        let socket_command = SocketControlCommand::Send(message);
+        if is_streaming {
+            self.stream_api_service.input.send(socket_command)
+        } else {
+            self.api_service.input.send(socket_command)
+        }.unwrap();
+        Ok(())
     }
 
     fn make_socket_service(socket_config: SocketConfig) -> Result<SocketServiceHandle, ServerConnectionError> {
@@ -130,12 +146,20 @@ enum SocketNotification {
 #[derive(Debug, Error)]
 pub enum ServerConnectionError {
     #[error("Socket error")]
-    SocketError(SocketError)
+    SocketError(SocketError),
+    #[error("JSON serialization error")]
+    SerializationError(SerdeError),
 }
 
 
 impl From<SocketError> for ServerConnectionError {
     fn from(value: SocketError) -> Self {
         Self::SocketError(value)
+    }
+}
+
+impl From<SerdeError> for ServerConnectionError {
+    fn from(value: SerdeError) -> Self {
+        Self::SerializationError(value)
     }
 }
