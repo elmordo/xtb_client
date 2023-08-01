@@ -12,7 +12,7 @@ pub struct Command<T: Serialize> {
 
 #[derive(Clone, Deserialize)]
 pub struct CommandResponse<T: Deserialize> {
-    return_data: T,
+    return_data: Option<T>,
     custom_tag: Option<String>,
 }
 
@@ -22,7 +22,7 @@ pub struct CommandErrorResponse {
     pub error_description: String,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Deserialize)]
 pub enum XtbErrorCode {
     #[error("Invalid price")]
     BE001,
