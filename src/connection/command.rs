@@ -10,14 +10,17 @@ pub struct Command<T: Serialize> {
 }
 
 
+pub type CommandResult<T: Deserialize> = Result<CommandOk<T>, CommandError>;
+
+
 #[derive(Clone, Deserialize)]
-pub struct CommandResponse<T: Deserialize> {
+pub struct CommandOk<T: Deserialize> {
     return_data: Option<T>,
     custom_tag: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
-pub struct CommandErrorResponse {
+pub struct CommandError {
     pub error_code: XtbErrorCode,
     pub error_description: String,
 }
