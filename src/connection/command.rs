@@ -1,30 +1,55 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+
+/// Represent XTB API command
 #[derive(Clone, Serialize)]
 pub struct Command<T: Serialize> {
+    /// Command name
+    /// See http://developers.xstore.pro/documentation/ for available commands
     pub command: String,
-    pub arguments: T,
+
+    /// Arguments
+    pub arguments: Option<T>,
+
+    /// Custom tag used to identify responses
     pub custom_tag: Option<String>,
+
+    /// For streaming commands only
+    /// See http://developers.xstore.pro/documentation/#available-streaming-commands
     pub stream_session_id: Option<String>,
 }
 
 
+/// Type alias for command responses
 pub type CommandResult<T: Deserialize> = Result<CommandOk<T>, CommandError>;
 
 
+/// Represent response when command was successful
 #[derive(Clone, Deserialize)]
 pub struct CommandOk<T: Deserialize> {
+    /// Returned data
     return_data: Option<T>,
+
+    /// Custom tag used for response identification
     custom_tag: Option<String>,
 }
 
+
+/// Represent error when command fails
 #[derive(Clone, Deserialize)]
 pub struct CommandError {
+    /// Error code
+    /// See http://developers.xstore.pro/documentation/#error-messages
     pub error_code: XtbErrorCode,
+
+    /// Description of the error
     pub error_description: String,
 }
 
+
+/// Error codes of XTB API
+/// See http://developers.xstore.pro/documentation/#error-messages
 #[derive(Debug, Error, Deserialize)]
 pub enum XtbErrorCode {
     #[error("Invalid price")]
