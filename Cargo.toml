@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 rxrust = "^1.0.0-beta.4"
 thiserror = "^1.0.44"
-tungstenite = { version = "^0.20.0", features = ["native-tls"] }
+tungstenite = { version = "^0.20.0", features = ["rustls", "__rustls-tls"] }
 url = "^2.4.0"

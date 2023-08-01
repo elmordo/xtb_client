@@ -55,7 +55,7 @@ impl Socket {
         let dur = Some(Duration::from_millis(timeout));
         match socket.get_mut() {
             MaybeTlsStream::Plain(s) => s.set_read_timeout(dur),
-            MaybeTlsStream::NativeTls(s) => s.get_mut().set_read_timeout(dur),
+            MaybeTlsStream::Rustls(s) => s.get_mut().set_read_timeout(dur),
             _ => Ok(())
         }.map_err(|_| SocketError::UnableToSetTimeout)?;
         Ok(())
