@@ -1,7 +1,7 @@
 use futures_util::{Sink, SinkExt};
 use http::Uri;
 use serde::{Deserialize, Serialize};
-use serde_json::Map;
+use serde_json::{Map, Value};
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio_websockets::{ClientBuilder, Error as WSError, MaybeTlsStream, Message, WebsocketStream};
@@ -18,6 +18,7 @@ pub struct XtbServerConnection {
 }
 
 
+/// Connection to the XTB trading server
 impl XtbServerConnection {
     /// Create new connection based on uri
     pub async fn new(uri: Uri) -> Result<Self, XtbServerConnectionError> {
@@ -52,7 +53,7 @@ impl XtbServerConnection {
 
 /// The command response with unknown type
 pub struct Response {
-    value: serde_json::Value,
+    value: Value,
 }
 
 
@@ -60,15 +61,30 @@ impl Response {
     /// Return true, if response `status` field  has value `true`. Return `false` otherwise.
     pub fn is_ok(&self) -> Result<bool, ResponseError> {
         let main_obj = self.get_main_object()?;
-        Ok(true)
+        main_obj.get("status")
+            .ok_or_else(|| ResponseError::InvalidFormat)
+            .and_then(|val| {
+                match val {
+                    Value::Bool(is_ok) => Ok(is_ok.clone()),
+                    _ => Err(ResponseError::InvalidFormat)
+                }
+            })
     }
 
     /// Return value of the `custom_tag` field or None if no `custom_tag` field was not found
     pub fn get_custom_tag(&self) -> Result<Option<String>, ResponseError> {
-        let main_obj = self.get_main_object();
-        Ok(None)
+        let main_obj = self.get_main_object()?;
+        match main_obj.get("custom_tag") {
+            Some(val) => match val {
+                Value::Null => Ok(None),
+                Value::String(tag) => Ok(Some(tag.clone())),
+                _ => Err(ResponseError::InvalidFormat),
+            },
+            None => Ok(None),
+        }
     }
 
+    /// Consume `Response` and return `CommandResult` constructed from the response
     pub fn unpack_command_result<'de, T: Deserialize<'de>>(self) -> Result<CommandResult<T>, ResponseError> {
         if self.is_ok()? {
             Ok(Ok(CommandOk::deserialize(self.value).map_err(|err| ResponseError::DeserializationError(err))?))
@@ -77,9 +93,10 @@ impl Response {
         }
     }
 
-    pub fn get_main_object(&self) -> Result<&Map<String, serde_json::Value>, ResponseError> {
+    /// Get main object of the response
+    fn get_main_object(&self) -> Result<&Map<String, Value>, ResponseError> {
         match &self.value {
-            serde_json::Value::Object(obj) => Ok(obj),
+            Value::Object(obj) => Ok(obj),
             _ => Err(ResponseError::InvalidFormat)
         }
     }
