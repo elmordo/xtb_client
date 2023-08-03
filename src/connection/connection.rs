@@ -1,165 +1,143 @@
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::thread;
-use std::thread::JoinHandle;
-use serde::Serialize;
-
-use serde_json::Error as SerdeError;
+use futures_util::{Sink, SinkExt};
+use http::Uri;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use thiserror::Error;
-use tungstenite::Message;
-use crate::connection::command::Command;
+use tokio::net::TcpStream;
+use tokio_websockets::{ClientBuilder, Error as WSError, MaybeTlsStream, Message, WebsocketStream};
+use tokio_websockets::proto::ProtocolError;
 
-use crate::connection::socket::{Socket, SocketError};
-use crate::connection::SocketConfig;
+use crate::connection::command::{Command, CommandError, CommandOk, CommandResult};
 
-pub struct ServerConnection {
-    api_service: SocketServiceHandle,
-    stream_api_service: SocketServiceHandle
+type WSStream = WebsocketStream<MaybeTlsStream<TcpStream>>;
+
+
+/// Wrap connection (normal or streaming) to the XTB server
+pub struct XtbServerConnection {
+    stream: WSStream,
 }
 
 
-impl ServerConnection {
-    pub fn new(socket_config: SocketConfig, stream_socket_config: SocketConfig) -> Result<Self, ServerConnectionError> {
-        let api_service = Self::make_socket_service(socket_config)?;
-        let stream_api_service = Self::make_socket_service(stream_socket_config)?;
+/// Connection to the XTB trading server
+impl XtbServerConnection {
+    /// Create new connection based on uri
+    pub async fn new(uri: Uri) -> Result<Self, XtbServerConnectionError> {
+        let stream = ClientBuilder::from_uri(uri).connect().await.map_err(|err| XtbServerConnectionError::UnableToConnect(err))?;
         Ok(Self {
-            api_service,
-            stream_api_service,
+            stream
         })
     }
 
-    pub fn send_command<T: Serialize>(&mut self, command: Command<T>) -> Result<(), ServerConnectionError> {
-        let is_streaming = command.stream_session_id.is_some();
+    /// Send command to the server
+    pub async fn send<T: Serialize>(&mut self, command: Command<T>) -> Result<(), XtbServerConnectionError> {
         let payload = serde_json::to_string(&command)?;
-        let message = Message::from(payload);
-        let socket_command = SocketControlCommand::Send(message);
-        if is_streaming {
-            self.stream_api_service.input.send(socket_command)
-        } else {
-            self.api_service.input.send(socket_command)
-        }.unwrap();
+        self.stream.send(Message::text(payload)).await.map_err(|err| XtbServerConnectionError::UnableToSendMessage(err))?;
         Ok(())
     }
 
-    fn make_socket_service(socket_config: SocketConfig) -> Result<SocketServiceHandle, ServerConnectionError> {
-        let socket = Socket::new(socket_config)?;
-        Ok(SocketServiceHandle::new(socket))
+    /// Read response from the server
+    pub async fn read(&mut self) -> Result<Response, XtbServerConnectionError> {
+        let body = self
+            .stream
+            .next()
+            .await
+            .unwrap()
+            .map_err(|err| XtbServerConnectionError::UnableToReceiveMessage(err))?
+            .as_text()
+            .map_err(|err| XtbServerConnectionError::UnableToDecodeMessage(err))?
+            .to_owned();
+        Ok(Response::from(body))
     }
 }
 
 
-struct SocketServiceHandle {
-    input: Sender<SocketControlCommand>,
-    output: Receiver<SocketNotification>,
-    join: JoinHandle<()>
+/// The command response with unknown type
+pub struct Response {
+    value: Value,
 }
 
 
-impl SocketServiceHandle {
-    fn new(socket: Socket) -> Self {
-        let (mut service, input, output) = SocketService::new(socket);
-        let join = thread::spawn(move || {
-            service.start();
-        });
+impl Response {
+    /// Return true, if response `status` field  has value `true`. Return `false` otherwise.
+    pub fn is_ok(&self) -> Result<bool, ResponseError> {
+        let main_obj = self.get_main_object()?;
+        main_obj.get("status")
+            .ok_or_else(|| ResponseError::InvalidFormat)
+            .and_then(|val| {
+                match val {
+                    Value::Bool(is_ok) => Ok(is_ok.clone()),
+                    _ => Err(ResponseError::InvalidFormat)
+                }
+            })
+    }
+
+    /// Return value of the `custom_tag` field or None if no `custom_tag` field was not found
+    pub fn get_custom_tag(&self) -> Result<Option<String>, ResponseError> {
+        let main_obj = self.get_main_object()?;
+        match main_obj.get("custom_tag") {
+            Some(val) => match val {
+                Value::Null => Ok(None),
+                Value::String(tag) => Ok(Some(tag.clone())),
+                _ => Err(ResponseError::InvalidFormat),
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// Consume `Response` and return `CommandResult` constructed from the response
+    pub fn unpack_command_result<'de, T: Deserialize<'de>>(self) -> Result<CommandResult<T>, ResponseError> {
+        if self.is_ok()? {
+            Ok(Ok(CommandOk::deserialize(self.value).map_err(|err| ResponseError::DeserializationError(err))?))
+        } else {
+            Ok(Err(CommandError::deserialize(self.value).map_err(|err| ResponseError::DeserializationError(err))?))
+        }
+    }
+
+    /// Get main object of the response
+    fn get_main_object(&self) -> Result<&Map<String, Value>, ResponseError> {
+        match &self.value {
+            Value::Object(obj) => Ok(obj),
+            _ => Err(ResponseError::InvalidFormat)
+        }
+    }
+}
+
+
+impl From<String> for Response {
+    fn from(value: String) -> Self {
         Self {
-            input,
-            output,
-            join,
+            value: serde_json::from_str(&value).unwrap()
         }
     }
-}
-
-
-struct SocketService {
-    socket: Socket,
-    command_input: Receiver<SocketControlCommand>,
-    notification_output: Sender<SocketNotification>,
-    stop_flag: bool,
-}
-
-
-impl SocketService {
-    fn new(socket: Socket) -> (Self, Sender<SocketControlCommand>, Receiver<SocketNotification>) {
-        let (cmd_sender, cmd_receiver) = channel();
-        let (notification_sender, notification_receiver) = channel();
-        let instance = Self {
-            socket,
-            command_input: cmd_receiver,
-            notification_output: notification_sender,
-            stop_flag: false,
-        };
-        (instance, cmd_sender, notification_receiver)
-    }
-
-    fn start(&mut self) {
-        loop {
-            self.receive_messages();
-            self.process_commands();
-            if self.stop_flag {
-                break;
-            }
-        }
-        self.notification_output.send(SocketNotification::Stopped).unwrap();
-    }
-
-    fn process_commands(&mut self) {
-        while let Ok(cmd) = self.command_input.try_recv() {
-            match cmd {
-                SocketControlCommand::Stop => self.stop(),
-                SocketControlCommand::Send(msg) => self.send_message(msg),
-            }
-        }
-    }
-
-    fn stop(&mut self) {
-        self.stop_flag = true;
-    }
-
-    fn send_message(&mut self, message: Message) {
-        match self.socket.send(message) {
-            Err(err) => self.send_notification(SocketNotification::SocketError(err)),
-            _ => ()
-        }
-    }
-
-    fn receive_messages(&mut self) {
-
-    }
-
-    fn send_notification(&mut self, notification: SocketNotification) {
-        self.notification_output.send(notification).unwrap();
-    }
-}
-
-
-enum SocketControlCommand {
-    Stop,
-    Send(Message),
-}
-
-enum SocketNotification {
-    Stopped,
-    Message(Message),
-    SocketError(SocketError),
 }
 
 
 #[derive(Debug, Error)]
-pub enum ServerConnectionError {
-    #[error("Socket error")]
-    SocketError(SocketError),
-    #[error("JSON serialization error")]
-    SerializationError(SerdeError),
+pub enum XtbServerConnectionError {
+    #[error("Unable to connect to the server")]
+    UnableToConnect(WSError),
+    #[error("Unable to send message")]
+    UnableToSendMessage(WSError),
+    #[error("Unable to receive message")]
+    UnableToReceiveMessage(WSError),
+    #[error("Unable to serialize value")]
+    SerializationError(serde_json::Error),
+    #[error("Unable to decode message")]
+    UnableToDecodeMessage(ProtocolError),
 }
 
 
-impl From<SocketError> for ServerConnectionError {
-    fn from(value: SocketError) -> Self {
-        Self::SocketError(value)
-    }
-}
-
-impl From<SerdeError> for ServerConnectionError {
-    fn from(value: SerdeError) -> Self {
+impl From<serde_json::Error> for XtbServerConnectionError {
+    fn from(value: serde_json::Error) -> Self {
         Self::SerializationError(value)
     }
+}
+
+
+#[derive(Debug, Error)]
+pub enum ResponseError {
+    #[error("Response object is in invalid format")]
+    InvalidFormat,
+    #[error("Unable to deserialize")]
+    DeserializationError(serde_json::Error),
 }
