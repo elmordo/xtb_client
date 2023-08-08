@@ -8,6 +8,16 @@ pub struct XtbClient {
 }
 
 
+impl XtbClient {
+    pub fn new(api_connection: XtbServerConnection, stream_api_connection: XtbServerConnection) -> Self {
+        Self {
+            api_connection,
+            stream_api_connection,
+        }
+    }
+}
+
+
 #[async_trait]
 impl AuthApi for XtbClient {
     async fn login(&mut self, args: LoginArgs) -> Result<(), AuthApiError> {
