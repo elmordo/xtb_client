@@ -1,15 +1,16 @@
-use futures_util::{Sink, SinkExt};
-use http::Uri;
+use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
 use tokio::net::TcpStream;
-use tokio_websockets::{ClientBuilder, Error as WSError, MaybeTlsStream, Message, WebsocketStream};
-use tokio_websockets::proto::ProtocolError;
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::tungstenite::error::{ProtocolError, Error as WsError};
+use tokio_tungstenite::tungstenite::Message;
+use url::Url;
 
 use crate::connection::command::{Command, CommandError, CommandOk, CommandResult};
 
-type WSStream = WebsocketStream<MaybeTlsStream<TcpStream>>;
+type WSStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 
 /// Wrap connection (normal or streaming) to the XTB server
@@ -21,8 +22,8 @@ pub struct XtbServerConnection {
 /// Connection to the XTB trading server
 impl XtbServerConnection {
     /// Create new connection based on uri
-    pub async fn new(uri: Uri) -> Result<Self, XtbServerConnectionError> {
-        let stream = ClientBuilder::from_uri(uri).connect().await.map_err(|err| XtbServerConnectionError::UnableToConnect(err))?;
+    pub async fn new(url: Url) -> Result<Self, XtbServerConnectionError> {
+        let (stream, _) = connect_async(url).await.map_err(|err| XtbServerConnectionError::UnableToConnect(err))?;
         Ok(Self {
             stream
         })
@@ -43,7 +44,7 @@ impl XtbServerConnection {
             .await
             .unwrap()
             .map_err(|err| XtbServerConnectionError::UnableToReceiveMessage(err))?
-            .as_text()
+            .to_text()
             .map_err(|err| XtbServerConnectionError::UnableToDecodeMessage(err))?
             .to_owned();
         Ok(Response::from(body))
@@ -115,15 +116,15 @@ impl From<String> for Response {
 #[derive(Debug, Error)]
 pub enum XtbServerConnectionError {
     #[error("Unable to connect to the server")]
-    UnableToConnect(WSError),
+    UnableToConnect(WsError),
     #[error("Unable to send message")]
-    UnableToSendMessage(WSError),
+    UnableToSendMessage(WsError),
     #[error("Unable to receive message")]
-    UnableToReceiveMessage(WSError),
+    UnableToReceiveMessage(WsError),
     #[error("Unable to serialize value")]
     SerializationError(serde_json::Error),
     #[error("Unable to decode message")]
-    UnableToDecodeMessage(ProtocolError),
+    UnableToDecodeMessage(WsError),
 }
 
 
