@@ -1,10 +1,12 @@
+use async_trait::async_trait;
 use futures_util::{Sink, SinkExt, StreamExt};
+use futures_util::stream::{SplitSink, SplitStream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
-use tokio_tungstenite::tungstenite::error::{ProtocolError, Error as WsError};
+use tokio_tungstenite::tungstenite::error::Error as WsError;
 use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
@@ -13,9 +15,21 @@ use crate::connection::command::{Command, CommandError, CommandOk, CommandResult
 type WSStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 
+#[async_trait]
+pub trait MessageSink {
+    async fn send<T: Serialize + Send>(&mut self, command: Command<T>) -> Result<(), XtbServerConnectionError>;
+}
+
+#[async_trait]
+pub trait MessageStream {
+    async fn receive(&mut self) -> Result<Response, XtbServerConnectionError>;
+}
+
+
 /// Wrap connection (normal or streaming) to the XTB server
 pub struct XtbServerConnection {
-    stream: WSStream,
+    sink: XtbSink,
+    stream: XtbStream,
 }
 
 
@@ -23,23 +37,58 @@ pub struct XtbServerConnection {
 impl XtbServerConnection {
     /// Create new connection based on uri
     pub async fn new(url: Url) -> Result<Self, XtbServerConnectionError> {
-        let (stream, _) = connect_async(url).await.map_err(|err| XtbServerConnectionError::UnableToConnect(err))?;
+        let (mut ws_stream, _) = connect_async(url).await.map_err(|err| XtbServerConnectionError::UnableToConnect(err))?;
+        let (sink, stream) = ws_stream.split();
         Ok(Self {
-            stream
+            sink: XtbSink(sink),
+            stream: XtbStream(stream),
         })
     }
 
+    pub fn split(mut self) -> (XtbSink, XtbStream) {
+        (self.sink, self.stream)
+    }
+}
+
+#[async_trait]
+impl MessageSink for XtbServerConnection {
+    async fn send<T: Serialize + Send>(&mut self, command: Command<T>) -> Result<(), XtbServerConnectionError> {
+        self.sink.send(command).await
+    }
+}
+
+
+#[async_trait]
+impl MessageStream for XtbServerConnection {
+    async fn receive(&mut self) -> Result<Response, XtbServerConnectionError> {
+        self.stream.receive().await
+    }
+}
+
+
+pub struct XtbSink(SplitSink<WSStream, Message>);
+
+
+#[async_trait]
+impl MessageSink for XtbSink {
     /// Send command to the server
-    pub async fn send<T: Serialize>(&mut self, command: Command<T>) -> Result<(), XtbServerConnectionError> {
+    async fn send<T: Serialize + Send>(&mut self, command: Command<T>) -> Result<(), XtbServerConnectionError> {
         let payload = serde_json::to_string(&command)?;
-        self.stream.send(Message::text(payload)).await.map_err(|err| XtbServerConnectionError::UnableToSendMessage(err))?;
+        self.0.send(Message::text(payload)).await.map_err(|err| XtbServerConnectionError::UnableToSendMessage(err))?;
         Ok(())
     }
+}
 
+
+pub struct XtbStream(SplitStream<WSStream>);
+
+
+#[async_trait]
+impl MessageStream for XtbStream {
     /// Read response from the server
-    pub async fn read(&mut self) -> Result<Response, XtbServerConnectionError> {
+    async fn receive(&mut self) -> Result<Response, XtbServerConnectionError> {
         let body = self
-            .stream
+            .0
             .next()
             .await
             .unwrap()
