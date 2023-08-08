@@ -102,6 +102,7 @@ impl MessageStream for XtbStream {
 
 
 /// The command response with unknown type
+#[derive(Clone, Debug)]
 pub struct Response {
     value: Value,
 }
