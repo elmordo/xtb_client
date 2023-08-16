@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-
 /// Represent XTB API command
 #[derive(Clone, Serialize)]
 pub struct Command<Arg: Serialize> {
@@ -18,6 +17,18 @@ pub struct Command<Arg: Serialize> {
     /// For streaming commands only
     /// See http://developers.xstore.pro/documentation/#available-streaming-commands
     pub stream_session_id: Option<String>,
+}
+
+
+impl<Args: Serialize> Command<Args> {
+    pub fn new(command: &str, arguments: Option<Args>) -> Self {
+        Self {
+            command: command.to_owned(),
+            arguments,
+            custom_tag: None,
+            stream_session_id: None,
+        }
+    }
 }
 
 

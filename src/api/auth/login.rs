@@ -1,7 +1,13 @@
-use serde::{Deserialize, Serialize};
+use derive_builder::Builder;
+use serde::Serialize;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Default, Serialize, Builder)]
 pub struct LoginArgs {
-    user_id: String,
-    password: String,
+    pub user_id: String,
+    pub password: String,
+}
+
+
+pub struct LoginResponse {
+
 }

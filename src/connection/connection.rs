@@ -162,6 +162,12 @@ impl From<String> for Response {
     }
 }
 
+impl Into<Value> for Response {
+    fn into(self) -> Value {
+        self.value
+    }
+}
+
 
 #[derive(Debug, Error)]
 pub enum XtbServerConnectionError {
