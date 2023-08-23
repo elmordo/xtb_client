@@ -2,9 +2,13 @@ use serde::Deserialize;
 use serde_json::{Error as SerdeJsonError, Value};
 use thiserror::Error;
 
+/// Result of the XTB API command
+/// * Ok variant represents success
+/// * Err variant represents error returned by remote API
 pub type CommandResult<D> = Result<CommandSuccess<D>, CommandFailed>;
 
 
+/// Parse response represented as serde_json::Value enum
 pub fn parse_response<D>(value: Value) -> Result<CommandResult<D>, ParseResponseError>
     where D: for<'de> Deserialize<'de>
 {
@@ -20,6 +24,8 @@ pub fn parse_response<D>(value: Value) -> Result<CommandResult<D>, ParseResponse
     Ok(return_value)
 }
 
+
+/// Extract the `status` field from Value representing the response object.
 fn get_response_status_from_raw_body(value: &Value) -> Result<bool, ParseResponseError> {
     value
         .as_object()
@@ -37,6 +43,7 @@ fn get_response_status_from_raw_body(value: &Value) -> Result<bool, ParseRespons
 }
 
 
+/// Error states for response parsing
 #[derive(Debug, Error)]
 pub enum ParseResponseError {
     #[error("Data is in invalid format")]
@@ -46,6 +53,7 @@ pub enum ParseResponseError {
 }
 
 
+/// Detail of the response data content errors
 #[derive(Debug)]
 pub enum InvalidFormatErrorInfo {
     NotAnObject,
@@ -54,6 +62,7 @@ pub enum InvalidFormatErrorInfo {
 }
 
 
+/// Data passed when command was success
 #[derive(Clone, Deserialize)]
 pub struct CommandSuccess<D> {
     /// Returned data
@@ -64,6 +73,7 @@ pub struct CommandSuccess<D> {
 }
 
 
+/// Data passed when command failed
 #[derive(Clone, Deserialize)]
 pub struct CommandFailed {
     /// Error code
