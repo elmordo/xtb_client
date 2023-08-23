@@ -3,13 +3,10 @@ use thiserror::Error;
 
 pub use login::{LoginArgs, LoginArgsBuilder};
 
-use crate::connection::XtbServerConnectionError;
-
 mod login;
 
 #[async_trait]
 pub trait AuthApi {
-
     type Error;
 
     /// Login user
@@ -22,8 +19,6 @@ pub trait AuthApi {
 
 #[derive(Debug, Error)]
 pub enum AuthApiError {
-    #[error("Error on connection layer")]
-    ConnectionError(XtbServerConnectionError),
     #[error("Login failed")]
     LoginFailed,
 }
