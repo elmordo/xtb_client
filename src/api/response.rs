@@ -8,10 +8,10 @@ pub type CommandResult<D> = Result<CommandSuccess<D>, CommandFailed>;
 #[derive(Clone, Deserialize)]
 pub struct CommandSuccess<D> {
     /// Returned data
-    return_data: Option<D>,
+    pub return_data: Option<D>,
 
     /// Custom tag used for response identification
-    custom_tag: Option<String>,
+    pub custom_tag: Option<String>,
 }
 
 
