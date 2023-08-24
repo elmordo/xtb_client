@@ -74,41 +74,6 @@ fn get_custom_tag_from_top_level_object(value: &Map<String, Value>) -> Result<Op
 }
 
 
-/// Parse response represented as serde_json::Value enum
-pub fn parse_response<D>(value: Value) -> Result<CommandResult<D>, ParseResponseError>
-    where D: for<'de> Deserialize<'de>
-{
-    let status = get_response_status_from_raw_body(&value)?;
-    let return_value = match status {
-        true => {
-            Ok(serde_json::from_value::<CommandSuccess<D>>(value).map_err(|err| ParseResponseError::DeserializationError(err))?)
-        }
-        false => {
-            Err(serde_json::from_value::<CommandFailed>(value).map_err(|err| ParseResponseError::DeserializationError(err))?)
-        }
-    };
-    Ok(return_value)
-}
-
-
-/// Extract the `status` field from Value representing the response object.
-fn get_response_status_from_raw_body(value: &Value) -> Result<bool, ParseResponseError> {
-    value
-        .as_object()
-        .ok_or_else(|| ParseResponseError::InvalidDataFormat(InvalidFormatErrorInfo::NotAnObject))
-        .and_then(|data| {
-            data
-                .get("status")
-                .ok_or_else(|| ParseResponseError::InvalidDataFormat(InvalidFormatErrorInfo::StatusFieldMissing))
-        })
-        .and_then(|raw_status| {
-            raw_status
-                .as_bool()
-                .ok_or_else(|| ParseResponseError::InvalidDataFormat(InvalidFormatErrorInfo::InvalidStatusType))
-        })
-}
-
-
 /// Error states for response parsing
 #[derive(Debug, Error)]
 pub enum ParseResponseError {
