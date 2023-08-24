@@ -8,6 +8,29 @@ use thiserror::Error;
 pub type CommandResult<D> = Result<CommandSuccess<D>, CommandFailed>;
 
 
+/// Data passed when command was success
+#[derive(Clone, Deserialize)]
+pub struct CommandSuccess<D> {
+    /// Returned data
+    pub return_data: Option<D>,
+
+    /// Custom tag used for response identification
+    pub custom_tag: Option<String>,
+}
+
+
+/// Data passed when command failed
+#[derive(Clone, Deserialize)]
+pub struct CommandFailed {
+    /// Error code
+    /// See http://developers.xstore.pro/documentation/#error-messages
+    pub error_code: XtbErrorCode,
+
+    /// Description of the error
+    pub error_description: String,
+}
+
+
 /// Contains basic info about response for response dispatching process
 #[derive(Debug, Clone)]
 pub struct ResponseInfo {
@@ -91,29 +114,6 @@ pub enum InvalidFormatErrorInfo {
     StatusFieldMissing,
     InvalidStatusType,
     InvalidCustomTagType,
-}
-
-
-/// Data passed when command was success
-#[derive(Clone, Deserialize)]
-pub struct CommandSuccess<D> {
-    /// Returned data
-    pub return_data: Option<D>,
-
-    /// Custom tag used for response identification
-    pub custom_tag: Option<String>,
-}
-
-
-/// Data passed when command failed
-#[derive(Clone, Deserialize)]
-pub struct CommandFailed {
-    /// Error code
-    /// See http://developers.xstore.pro/documentation/#error-messages
-    pub error_code: XtbErrorCode,
-
-    /// Description of the error
-    pub error_description: String,
 }
 
 /// Error codes of XTB API
