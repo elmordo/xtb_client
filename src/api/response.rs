@@ -1,11 +1,77 @@
 use serde::Deserialize;
-use serde_json::{Error as SerdeJsonError, Value};
+use serde_json::{Error as SerdeJsonError, Map, Value};
 use thiserror::Error;
 
 /// Result of the XTB API command
 /// * Ok variant represents success
 /// * Err variant represents error returned by remote API
 pub type CommandResult<D> = Result<CommandSuccess<D>, CommandFailed>;
+
+
+/// Contains basic info about response for response dispatching process
+#[derive(Debug, Clone)]
+pub struct ResponseInfo {
+    pub status: bool,
+    pub custom_tag: Option<String>,
+    value: Value,
+}
+
+
+impl ResponseInfo {
+    /// Construct new `ResponseInfo` from JSON value
+    pub fn new(value: Value) -> Result<Self, ParseResponseError> {
+        let top_level = get_response_top_level_object(&value)?;
+        let status = get_response_status_from_top_level_object(top_level)?;
+        let custom_tag = get_custom_tag_from_top_level_object(top_level)?;
+        Ok(Self {
+            status,
+            custom_tag,
+            value,
+        })
+    }
+}
+
+impl<D> TryInto<CommandResult<D>> for ResponseInfo where D: for<'de> Deserialize<'de> {
+    type Error = ParseResponseError;
+
+    /// Convert response info into typed response
+    fn try_into(self) -> Result<CommandResult<D>, ParseResponseError> {
+        Ok(match self.status {
+            true => Ok(serde_json::from_value::<CommandSuccess<D>>(self.value).map_err(|err| ParseResponseError::DeserializationError(err))?),
+            false => Err(serde_json::from_value::<CommandFailed>(self.value).map_err(|err| ParseResponseError::DeserializationError(err))?),
+        })
+    }
+}
+
+
+fn get_response_top_level_object<'v, 'm>(value: &'v Value) -> Result<&'m Map<String, Value>, ParseResponseError> where 'v: 'm {
+    value
+        .as_object()
+        .ok_or_else(|| ParseResponseError::InvalidDataFormat(InvalidFormatErrorInfo::NotAnObject))
+}
+
+
+/// Extract the `status` field from map representing the top level response object.
+fn get_response_status_from_top_level_object(value: &Map<String, Value>) -> Result<bool, ParseResponseError> {
+    value.get("status")
+        .ok_or_else(|| ParseResponseError::InvalidDataFormat(InvalidFormatErrorInfo::StatusFieldMissing))
+        .and_then(|raw_status| {
+            raw_status
+                .as_bool()
+                .ok_or_else(|| ParseResponseError::InvalidDataFormat(InvalidFormatErrorInfo::InvalidStatusType))
+        })
+}
+
+
+/// Extract the `custom_tag` field from map representing the top level response object.
+fn get_custom_tag_from_top_level_object(value: &Map<String, Value>) -> Result<Option<String>, ParseResponseError> {
+    // the unwrap is safe at this point
+    match value.get("custom_tag").or_else(|| Some(&Value::Null)).unwrap() {
+        Value::Null => Ok(None),
+        Value::String(val) => Ok(Some(val.to_string())),
+        _ => Err(ParseResponseError::InvalidDataFormat(InvalidFormatErrorInfo::InvalidCustomTagType))
+    }
+}
 
 
 /// Parse response represented as serde_json::Value enum
@@ -59,6 +125,7 @@ pub enum InvalidFormatErrorInfo {
     NotAnObject,
     StatusFieldMissing,
     InvalidStatusType,
+    InvalidCustomTagType,
 }
 
 
