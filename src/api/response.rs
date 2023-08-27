@@ -1,6 +1,10 @@
+use std::collections::VecDeque;
+use std::sync::Arc;
+
 use serde::Deserialize;
 use serde_json::{Error as SerdeJsonError, Map, Value};
 use thiserror::Error;
+use tokio::sync::{Mutex, Notify};
 
 /// Result of the XTB API command
 /// * Ok variant represents success
@@ -64,6 +68,64 @@ impl<D> TryInto<CommandResult<D>> for ResponseInfo where D: for<'de> Deserialize
             false => Err(serde_json::from_value::<CommandFailed>(self.value).map_err(|err| ParseResponseError::DeserializationError(err))?),
         })
     }
+}
+
+
+struct ResponseStreamInnerState {
+    queue: VecDeque<ResponseInfo>,
+    closed: bool,
+}
+
+
+pub struct ResponseStream {
+    state: Arc<Mutex<ResponseStreamInnerState>>,
+    notify: Arc<Notify>,
+}
+
+impl ResponseStream {
+    pub async fn status(&self) -> ResponseStreamStatus {
+        if self.closed().await {
+            ResponseStreamStatus::Closed
+        } else if self.queue_size().await > 0 {
+            ResponseStreamStatus::Ready
+        } else {
+            ResponseStreamStatus::Pending
+        }
+    }
+
+    pub async fn read(&mut self) -> Option<ResponseInfo> {
+        loop {
+            {
+                let mut state = self.state.lock().await;
+                if state.closed {
+                    break None;
+                }
+                if state.queue.len() > 0 {
+                    break state.queue.pop_front();
+                }
+            }
+            self.notify.notified().await;
+        }
+    }
+
+    pub async fn close(self) {
+        (*self.state.lock().await).closed = true;
+    }
+
+    pub async fn queue_size(&self) -> usize {
+        (*self.state.lock().await).queue.len()
+    }
+
+    pub async fn closed(&self) -> bool {
+        (*self.state.lock().await).closed
+    }
+}
+
+
+pub enum ResponseStreamStatus {
+    Pending,
+    Ready,
+    Closed,
 }
 
 
