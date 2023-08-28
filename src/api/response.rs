@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -71,18 +72,27 @@ impl<D> TryInto<CommandResult<D>> for ResponseInfo where D: for<'de> Deserialize
 }
 
 
-struct ResponseStreamInnerState {
+/// Shared state of response channel
+struct ResponseSharedState {
     queue: VecDeque<ResponseInfo>,
     closed: bool,
 }
 
 
-pub struct ResponseStream {
-    state: Arc<Mutex<ResponseStreamInnerState>>,
+pub struct ResponseStream;
+
+pub struct ResponseSink;
+
+
+/// Consumer endpoint of response channel
+pub struct ResponseChannel<T> {
+    state: Arc<Mutex<ResponseSharedState>>,
     notify: Arc<Notify>,
+    endpoint: PhantomData<T>,
 }
 
-impl ResponseStream {
+
+impl<T> ResponseChannel<T> {
     pub async fn status(&self) -> ResponseStreamStatus {
         if self.closed().await {
             ResponseStreamStatus::Closed
@@ -90,21 +100,6 @@ impl ResponseStream {
             ResponseStreamStatus::Ready
         } else {
             ResponseStreamStatus::Pending
-        }
-    }
-
-    pub async fn read(&mut self) -> Option<ResponseInfo> {
-        loop {
-            {
-                let mut state = self.state.lock().await;
-                if state.closed {
-                    break None;
-                }
-                if state.queue.len() > 0 {
-                    break state.queue.pop_front();
-                }
-            }
-            self.notify.notified().await;
         }
     }
 
@@ -122,6 +117,33 @@ impl ResponseStream {
 }
 
 
+impl ResponseChannel<ResponseStream> {
+    pub async fn read(&mut self) -> Option<ResponseInfo> {
+        loop {
+            {
+                let mut state = self.state.lock().await;
+                if state.closed {
+                    break None;
+                }
+                if state.queue.len() > 0 {
+                    break state.queue.pop_front();
+                }
+            }
+            self.notify.notified().await;
+        }
+    }
+}
+
+
+impl ResponseChannel<ResponseSink> {
+    pub async fn write(&mut self, info: ResponseInfo) {
+        (*self.state.lock().await).queue.push_back(info);
+        self.notify.notify_waiters();
+    }
+}
+
+
+/// Status of the response channel
 pub enum ResponseStreamStatus {
     Pending,
     Ready,
@@ -129,6 +151,8 @@ pub enum ResponseStreamStatus {
 }
 
 
+/// Extract top level object of the json `Value`
+/// If `Value` is not type of `Object` return error
 fn get_response_top_level_object<'v, 'm>(value: &'v Value) -> Result<&'m Map<String, Value>, ParseResponseError> where 'v: 'm {
     value
         .as_object()
