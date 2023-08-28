@@ -133,6 +133,12 @@ impl ResponseChannel<ResponseStream> {
             self.notify.notified().await;
         }
     }
+
+    pub async fn first(mut self) -> Option<ResponseInfo> {
+        let msg = self.read().await;
+        self.close().await;
+        msg
+    }
 }
 
 
