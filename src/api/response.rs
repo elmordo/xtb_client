@@ -117,6 +117,7 @@ impl<T> ResponseChannel<T> {
 }
 
 
+/// Implementation of the response stream (message consumer)
 impl ResponseChannel<ResponseStream> {
     pub async fn read(&mut self) -> Option<ResponseInfo> {
         loop {
@@ -135,7 +136,9 @@ impl ResponseChannel<ResponseStream> {
 }
 
 
+/// Implementation of response sink (producer)
 impl ResponseChannel<ResponseSink> {
+    /// Send new response into channel
     pub async fn write(&mut self, info: ResponseInfo) {
         (*self.state.lock().await).queue.push_back(info);
         self.notify.notify_waiters();
@@ -145,8 +148,11 @@ impl ResponseChannel<ResponseSink> {
 
 /// Status of the response channel
 pub enum ResponseStreamStatus {
+    /// Channel is open but no response is in queue
     Pending,
+    /// Channel is open and some response is in queue
     Ready,
+    /// Channel is closed
     Closed,
 }
 
