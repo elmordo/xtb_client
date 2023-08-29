@@ -21,7 +21,7 @@ impl<A> ApiCommand<A> {
 
 
 /// Build the command
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ApiCommandBuilder<A> {
     command: ApiCommand<A>,
 }
@@ -50,5 +50,19 @@ impl<A> ApiCommandBuilder<A> {
     /// Get built command
     pub fn build(self) -> ApiCommand<A> {
         self.command
+    }
+}
+
+
+impl<A> Default for ApiCommandBuilder<A> {
+    fn default() -> Self {
+        Self {
+            command: ApiCommand {
+                command: "".to_owned(),
+                custom_tag: None,
+                stream_session_id: None,
+                arguments: None,
+            }
+        }
     }
 }
