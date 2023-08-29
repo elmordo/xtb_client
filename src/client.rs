@@ -1,14 +1,15 @@
-use std::fmt::Error;
-
+use async_trait::async_trait;
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_tungstenite::tungstenite::Error as WSError;
 use url::Url;
 
-use crate::api::{AccountApi, CommandResult};
+use crate::api::{AccountApi, CommandFailed, CommandResult, LoginArg, ParseResponseError, ResponseChannel, ResponseInfo, ResponseStream};
 
-pub struct XtbClient {}
+pub struct XtbClient {
+    stream_session_id: Option<String>,
+}
 
 
 impl XtbClient {
@@ -18,18 +19,49 @@ impl XtbClient {
     ) -> Self {
         todo!()
     }
+
+    async fn send_command<A>(&mut self, command: &str, args: Option<A>) -> Result<ResponseChannel<ResponseStream>, XtbClientError> {
+        todo!()
+    }
 }
 
 
+#[async_trait]
 impl AccountApi for XtbClient {
     type Error = XtbClientError;
 
-    fn login(&mut self, account_id: &str, password: &str) -> Result<CommandResult<()>, Error> {
-        todo!()
+    async fn login(&mut self, user_id: &str, password: &str) -> Result<(), Self::Error> {
+        let args = LoginArg {
+            user_id: user_id.to_string(),
+            password: password.to_string(),
+        };
+        let stream = self.send_command("login", Some(args)).await?;
+        let response_info = stream.first().await.ok_or_no_response()?;
+
+        let command_result: CommandResult<()> = response_info.try_into()?;
+        match command_result.clone() {
+            Ok(resp) => {
+                self.stream_session_id = resp.stream_session_id;
+                Ok(())
+            }
+            Err(err) => Err(XtbClientError::CommandFailed(err))
+        }
     }
 
-    fn logout(&mut self) -> Result<CommandResult<()>, Error> {
-        todo!()
+    async fn logout(&mut self) -> Result<(), Self::Error> {
+        let result: CommandResult<()> = self.send_command::<()>("logout", None).await?.first().await.ok_or_no_response()?.try_into()?;
+        result.map(|_| ()).map_err(|err| XtbClientError::CommandFailed(err))
+    }
+}
+
+
+trait OkOrNoResponse {
+    fn ok_or_no_response(self) -> Result<ResponseInfo, XtbClientError>;
+}
+
+impl OkOrNoResponse for Option<ResponseInfo> {
+    fn ok_or_no_response(self) -> Result<ResponseInfo, XtbClientError> {
+        self.ok_or_else(|| XtbClientError::NoResponseReceived)
     }
 }
 
@@ -113,7 +145,28 @@ impl XtbClientBuilder {
 
 
 #[derive(Debug, Error)]
-pub enum XtbClientError {}
+pub enum XtbClientError {
+    #[error("No response was received")]
+    NoResponseReceived,
+    #[error("Cannot parse response")]
+    ParseResponseError(ParseResponseError),
+    #[error("CommandFailed")]
+    CommandFailed(CommandFailed),
+}
+
+
+impl From<ParseResponseError> for XtbClientError {
+    fn from(value: ParseResponseError) -> Self {
+        Self::ParseResponseError(value)
+    }
+}
+
+
+impl From<CommandFailed> for XtbClientError {
+    fn from(value: CommandFailed) -> Self {
+        Self::CommandFailed(value)
+    }
+}
 
 
 #[derive(Debug, Error)]

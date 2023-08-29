@@ -20,6 +20,10 @@ pub struct CommandSuccess<D> {
     #[serde(default = "Option::default")]
     pub return_data: Option<D>,
 
+    /// Returned data
+    #[serde(default = "Option::default")]
+    pub stream_session_id: Option<String>,
+
     /// Custom tag used for response identification
     #[serde(default)]
     pub custom_tag: Option<String>,
@@ -27,7 +31,7 @@ pub struct CommandSuccess<D> {
 
 
 /// Data passed when command failed
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CommandFailed {
     /// Error code
     /// See http://developers.xstore.pro/documentation/#error-messages
