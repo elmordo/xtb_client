@@ -17,7 +17,7 @@ pub type CommandResult<D> = Result<CommandSuccess<D>, CommandFailed>;
 #[derive(Clone, Deserialize)]
 pub struct CommandSuccess<D> {
     /// Returned data
-    #[serde(default)]
+    #[serde(default = "Option::default")]
     pub return_data: Option<D>,
 
     /// Custom tag used for response identification
@@ -61,7 +61,7 @@ impl ResponseInfo {
     }
 }
 
-impl<D> TryInto<CommandResult<D>> for ResponseInfo where D: for<'de> Deserialize<'de> + Default {
+impl<D> TryInto<CommandResult<D>> for ResponseInfo where D: for<'de> Deserialize<'de> {
     type Error = ParseResponseError;
 
     /// Convert response info into typed response
