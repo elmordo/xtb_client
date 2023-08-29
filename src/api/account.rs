@@ -1,6 +1,7 @@
 use std::fmt::Error;
 
 use async_trait::async_trait;
+use serde::Serialize;
 
 use crate::api::CommandResult;
 
@@ -13,4 +14,11 @@ pub trait AccountApi {
 
     /// Logout user
     fn logout(&mut self) -> Result<CommandResult<()>, Error>;
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all(serialize = "camelCase"))]
+pub struct LoginArg {
+    user_id: String,
+    password: String,
 }
