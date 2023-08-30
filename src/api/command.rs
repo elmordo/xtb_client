@@ -32,18 +32,18 @@ impl<A> ApiCommandBuilder<A> {
         self
     }
 
-    pub fn stream_session_id(mut self, stream_session_id: String) -> Self {
-        self.command.stream_session_id = Some(stream_session_id);
+    pub fn stream_session_id(mut self, stream_session_id: Option<String>) -> Self {
+        self.command.stream_session_id = stream_session_id;
         self
     }
 
-    pub fn custom_tag(mut self, custom_tag: String) -> Self {
-        self.command.custom_tag = Some(custom_tag);
+    pub fn custom_tag(mut self, custom_tag: Option<String>) -> Self {
+        self.command.custom_tag = custom_tag;
         self
     }
 
-    pub fn arguments(mut self, arguments: A) -> Self {
-        self.command.arguments = Some(arguments);
+    pub fn arguments(mut self, arguments: Option<A>) -> Self {
+        self.command.arguments = arguments;
         self
     }
 

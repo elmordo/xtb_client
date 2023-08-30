@@ -1,14 +1,20 @@
 use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
+use futures_util::stream::SplitSink;
+use serde::Serialize;
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
-use tokio_tungstenite::tungstenite::Error as WSError;
+use tokio_tungstenite::tungstenite::{Error as WSError, Message};
 use url::Url;
 
-use crate::api::{AccountApi, CommandFailed, CommandResult, LoginArg, ParseResponseError, ResponseChannel, ResponseInfo, ResponseStream};
+use crate::api::{AccountApi, ApiCommand, CommandFailed, CommandResult, LoginArg, ParseResponseError, ResponseChannel, ResponseInfo, ResponseStream};
 
 pub struct XtbClient {
     stream_session_id: Option<String>,
+    api_sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+    stream_api_sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+    next_id: u64,
 }
 
 
@@ -17,11 +23,49 @@ impl XtbClient {
         api_socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
         stream_api_socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
     ) -> Self {
+        let (api_sink, api_stream) = api_socket.split();
+        let (stream_api_sink, stream_api_stream) = stream_api_socket.split();
+
+        Self {
+            stream_session_id: None,
+            api_sink,
+            stream_api_sink,
+            next_id: 1,
+        }
+    }
+
+    async fn send_api_command<A: Serialize>(&mut self, command: &str, args: Option<A>) -> Result<ResponseChannel<ResponseStream>, XtbClientError> {
+        let cmd = self.build_command(command, args, false);
+        let tag = cmd.custom_tag.clone();
+        let response_channel = self.make_response_channel(&tag.unwrap());
+        let message = Self::build_message(cmd)?;
+        self.api_sink.send(message).await.map_err(|_| XtbClientError::MessageCannotBeSend(ApiType::Api))?;
+        Ok(response_channel)
+    }
+
+    fn build_command<A>(&mut self, command: &str, args: Option<A>, is_streaming: bool) -> ApiCommand<A> {
+        ApiCommand::builder()
+            .command(command.to_string())
+            .arguments(args)
+            .custom_tag(Some(self.generate_unique_custom_tag()))
+            .stream_session_id(if is_streaming { self.stream_session_id.clone() } else { None })
+            .build()
+    }
+
+    fn build_message<A: Serialize>(command: ApiCommand<A>) -> Result<Message, XtbClientError> {
+        let payload = serde_json::to_string(&command).map_err(|_| XtbClientError::SerializationFailed)?;
+        let message = Message::text(payload);
+        Ok(message)
+    }
+
+    fn make_response_channel(&mut self, custom_tag: &str) -> ResponseChannel<ResponseStream> {
         todo!()
     }
 
-    async fn send_command<A>(&mut self, command: &str, args: Option<A>) -> Result<ResponseChannel<ResponseStream>, XtbClientError> {
-        todo!()
+    fn generate_unique_custom_tag(&mut self) -> String {
+        let id = self.next_id.to_string();
+        self.next_id += 1;
+        format!("cmd_{}", id)
     }
 }
 
@@ -35,7 +79,7 @@ impl AccountApi for XtbClient {
             user_id: user_id.to_string(),
             password: password.to_string(),
         };
-        let stream = self.send_command("login", Some(args)).await?;
+        let stream = self.send_api_command("login", Some(args)).await?;
         let response_info = stream.first().await.ok_or_no_response()?;
 
         let command_result: CommandResult<()> = response_info.try_into()?;
@@ -49,7 +93,7 @@ impl AccountApi for XtbClient {
     }
 
     async fn logout(&mut self) -> Result<(), Self::Error> {
-        let result: CommandResult<()> = self.send_command::<()>("logout", None).await?.first().await.ok_or_no_response()?.try_into()?;
+        let result: CommandResult<()> = self.send_api_command::<()>("logout", None).await?.first().await.ok_or_no_response()?.try_into()?;
         result.map(|_| ()).map_err(|err| XtbClientError::CommandFailed(err))
     }
 }
@@ -152,6 +196,17 @@ pub enum XtbClientError {
     ParseResponseError(ParseResponseError),
     #[error("CommandFailed")]
     CommandFailed(CommandFailed),
+    #[error("Message cannot be sent")]
+    MessageCannotBeSend(ApiType),
+    #[error("Unable to serialize data")]
+    SerializationFailed,
+}
+
+
+#[derive(Debug)]
+pub enum ApiType {
+    Api,
+    StreamApi,
 }
 
 
