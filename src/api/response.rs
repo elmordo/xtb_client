@@ -85,6 +85,16 @@ struct ResponseSharedState {
 }
 
 
+impl ResponseSharedState {
+    pub fn new() -> Self {
+        Self {
+            queue: VecDeque::new(),
+            closed: false,
+        }
+    }
+}
+
+
 pub struct ResponseStream;
 
 pub struct ResponseSink;
@@ -99,6 +109,23 @@ pub struct ResponseChannel<T> {
 
 
 impl<T> ResponseChannel<T> {
+    pub fn new() -> (ResponseChannel<ResponseSink>, ResponseChannel<ResponseStream>) {
+        let state = Arc::new(Mutex::new(ResponseSharedState::new()));
+        let notify = Arc::new(Notify::new());
+
+        let sink = ResponseChannel {
+            state: state.clone(),
+            notify: notify.clone(),
+            endpoint: PhantomData::<ResponseSink>,
+        };
+        let stream = ResponseChannel {
+            state: state.clone(),
+            notify: notify.clone(),
+            endpoint: PhantomData::<ResponseStream>,
+        };
+        (sink, stream)
+    }
+
     pub async fn status(&self) -> ResponseStreamStatus {
         if self.closed().await {
             ResponseStreamStatus::Closed
