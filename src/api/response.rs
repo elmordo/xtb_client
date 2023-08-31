@@ -78,10 +78,13 @@ impl<D> TryInto<CommandResult<D>> for ResponseInfo where D: for<'de> Deserialize
 }
 
 
+pub type AfterCloseCallback = dyn FnOnce() -> () + Sync + Send;
+
 /// Shared state of response channel
 struct ResponseSharedState {
     queue: VecDeque<ResponseInfo>,
     closed: bool,
+    after_close_callbacks: Vec<Box<AfterCloseCallback>>,
 }
 
 
@@ -90,6 +93,7 @@ impl ResponseSharedState {
         Self {
             queue: VecDeque::new(),
             closed: false,
+            after_close_callbacks: Vec::new(),
         }
     }
 }
@@ -136,8 +140,17 @@ impl<T> ResponseChannel<T> {
         }
     }
 
+    pub async fn add_after_close_callback(&mut self, callback: Box<AfterCloseCallback>) {
+        (*self.state.lock().await).after_close_callbacks.push(callback);
+    }
+
     pub async fn close(self) {
-        (*self.state.lock().await).closed = true;
+        let mut state = self.state.lock().await;
+        (*state).closed = true;
+        let callbacks: Vec<Box<AfterCloseCallback>> = (*state).after_close_callbacks.drain(..).collect();
+        for callback in callbacks {
+            callback();
+        }
     }
 
     pub async fn queue_size(&self) -> usize {

@@ -8,7 +8,7 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_tungstenite::tungstenite::{Error as WSError, Message};
 use url::Url;
 
-use crate::api::{AccountApi, ApiCommand, CommandFailed, CommandResult, LoginArg, ParseResponseError, ResponseChannel, ResponseInfo, ResponseStream};
+use crate::api::{AccountApi, ApiCommand, CommandFailed, CommandResult, LoginArg, ParseResponseError, ResponseChannel, ResponseInfo, ResponseSink, ResponseStream};
 
 pub struct XtbClient {
     stream_session_id: Option<String>,
@@ -59,7 +59,9 @@ impl XtbClient {
     }
 
     fn make_response_channel(&mut self, custom_tag: &str) -> ResponseChannel<ResponseStream> {
-        todo!()
+        let (response_sink, response_stream) = ResponseChannel::<ResponseSink>::new();
+
+        response_stream
     }
 
     fn generate_unique_custom_tag(&mut self) -> String {
