@@ -9,18 +9,22 @@ use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio::spawn;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_tungstenite::tungstenite::{Error as WSError, Message};
 use url::Url;
 
 use crate::api::{AccountApi, ApiCommand, CommandFailed, CommandResult, LoginArg, ParseResponseError, ResponseChannel, ResponseInfo, ResponseSink, ResponseStream};
 
+type ResponseSinkLookup = Arc<Mutex<HashMap<String, ResponseChannel<ResponseSink>>>>;
+
 pub struct XtbClient {
+    api: ApiWrapper,
+    stream_api: ApiWrapper,
+
     stream_session_id: Option<String>,
-    api_sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    stream_api_sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     next_id: u64,
-    sinks_by_tag: Arc<Mutex<HashMap<String, ResponseChannel<ResponseSink>>>>,
+    sink_by_tag: ResponseSinkLookup,
 }
 
 
@@ -29,15 +33,14 @@ impl XtbClient {
         api_socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
         stream_api_socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
     ) -> Self {
-        let (api_sink, api_stream) = api_socket.split();
-        let (stream_api_sink, stream_api_stream) = stream_api_socket.split();
+        let sink_by_tag = Arc::new(Mutex::new(HashMap::new()));
 
         Self {
             stream_session_id: None,
-            api_sink,
-            stream_api_sink,
+            api: ApiWrapper::new(api_socket, sink_by_tag.clone()),
+            stream_api: ApiWrapper::new(stream_api_socket, sink_by_tag.clone()),
             next_id: 1,
-            sinks_by_tag: Arc::new(Mutex::new(HashMap::new())),
+            sink_by_tag,
         }
     }
 
@@ -46,7 +49,7 @@ impl XtbClient {
         let tag = cmd.custom_tag.clone();
         let response_channel = self.make_response_channel(&tag.unwrap()).await;
         let message = Self::build_message(cmd)?;
-        self.api_sink.send(message).await.map_err(|_| XtbClientError::MessageCannotBeSend(ApiType::Api))?;
+        self.api.sink.send(message).await.map_err(|_| XtbClientError::MessageCannotBeSend(ApiType::Api))?;
         Ok(response_channel)
     }
 
@@ -67,15 +70,15 @@ impl XtbClient {
 
     async fn make_response_channel(&mut self, custom_tag: &str) -> ResponseChannel<ResponseStream> {
         let (mut response_sink, response_stream) = ResponseChannel::<ResponseSink>::new();
-        let lookup = self.sinks_by_tag.clone();
+        let lookup = self.sink_by_tag.clone();
         let custom_tag_clone = custom_tag.to_string();
         response_sink.add_after_close_callback(Box::new(|| {
-            async fn remove_tag(lookup: Arc<Mutex<HashMap<String, ResponseChannel<ResponseSink>>>>, tag: String) {
+            async fn remove_tag(lookup: ResponseSinkLookup, tag: String) {
                 lookup.lock().await.remove(&tag);
             }
             spawn(remove_tag(lookup, custom_tag_clone));
         })).await;
-        self.sinks_by_tag.lock().await.insert(custom_tag.to_owned(), response_sink);
+        self.sink_by_tag.lock().await.insert(custom_tag.to_owned(), response_sink);
         response_stream
     }
 
@@ -201,6 +204,29 @@ impl XtbClientBuilder {
         let url = Url::parse(&url).map_err(|_| XtbClientBuilderError::InvalidUrl(url))?;
         let (ws, _) = connect_async(url).await.map_err(|err| XtbClientBuilderError::ConnectionError(err))?;
         Ok(ws)
+    }
+}
+
+
+struct ApiWrapper {
+    sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+    join_handle: JoinHandle<()>,
+    response_sink_lookup: ResponseSinkLookup,
+}
+
+
+impl ApiWrapper {
+    fn new(socket: WebSocketStream<MaybeTlsStream<TcpStream>>, response_sink_lookup: ResponseSinkLookup) -> Self {
+        let (sink, stream) = socket.split();
+
+        async fn receiver() {}
+
+        let join_handle = spawn(receiver());
+        Self {
+            sink,
+            join_handle,
+            response_sink_lookup,
+        }
     }
 }
 
