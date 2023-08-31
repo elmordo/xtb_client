@@ -1,9 +1,14 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use futures_util::stream::SplitSink;
 use serde::Serialize;
 use thiserror::Error;
 use tokio::net::TcpStream;
+use tokio::spawn;
+use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_tungstenite::tungstenite::{Error as WSError, Message};
 use url::Url;
@@ -15,6 +20,7 @@ pub struct XtbClient {
     api_sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     stream_api_sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     next_id: u64,
+    sinks_by_tag: Arc<Mutex<HashMap<String, ResponseChannel<ResponseSink>>>>,
 }
 
 
@@ -31,13 +37,14 @@ impl XtbClient {
             api_sink,
             stream_api_sink,
             next_id: 1,
+            sinks_by_tag: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     async fn send_api_command<A: Serialize>(&mut self, command: &str, args: Option<A>) -> Result<ResponseChannel<ResponseStream>, XtbClientError> {
         let cmd = self.build_command(command, args, false);
         let tag = cmd.custom_tag.clone();
-        let response_channel = self.make_response_channel(&tag.unwrap());
+        let response_channel = self.make_response_channel(&tag.unwrap()).await;
         let message = Self::build_message(cmd)?;
         self.api_sink.send(message).await.map_err(|_| XtbClientError::MessageCannotBeSend(ApiType::Api))?;
         Ok(response_channel)
@@ -58,9 +65,17 @@ impl XtbClient {
         Ok(message)
     }
 
-    fn make_response_channel(&mut self, custom_tag: &str) -> ResponseChannel<ResponseStream> {
-        let (response_sink, response_stream) = ResponseChannel::<ResponseSink>::new();
-
+    async fn make_response_channel(&mut self, custom_tag: &str) -> ResponseChannel<ResponseStream> {
+        let (mut response_sink, response_stream) = ResponseChannel::<ResponseSink>::new();
+        let lookup = self.sinks_by_tag.clone();
+        let custom_tag_clone = custom_tag.to_string();
+        response_sink.add_after_close_callback(Box::new(|| {
+            async fn remove_tag(lookup: Arc<Mutex<HashMap<String, ResponseChannel<ResponseSink>>>>, tag: String) {
+                lookup.lock().await.remove(&tag);
+            }
+            spawn(remove_tag(lookup, custom_tag_clone));
+        })).await;
+        self.sinks_by_tag.lock().await.insert(custom_tag.to_owned(), response_sink);
         response_stream
     }
 
