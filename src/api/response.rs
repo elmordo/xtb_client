@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Error as SerdeJsonError, Map, Value};
 use thiserror::Error;
 use tokio::sync::{Mutex, Notify};
+use tokio_tungstenite::tungstenite::Message;
 
 /// Result of the XTB API command
 /// * Ok variant represents success
@@ -65,6 +66,18 @@ impl TryFrom<Value> for ResponseInfo {
         })
     }
 }
+
+
+impl TryFrom<Message> for ResponseInfo {
+    type Error = ParseResponseError;
+
+    fn try_from(value: Message) -> Result<Self, Self::Error> {
+        let source = value.to_text().map_err(|_| ParseResponseError::MalformedMessage(value.clone()))?.to_owned();
+        let value = serde_json::to_value(source).map_err(|err| ParseResponseError::DeserializationError(err))?;
+        Self::try_from(value)
+    }
+}
+
 
 impl<D> TryInto<CommandResult<D>> for ResponseInfo where D: for<'de> Deserialize<'de> {
     type Error = ParseResponseError;
@@ -249,6 +262,8 @@ pub enum ParseResponseError {
     InvalidDataFormat(InvalidFormatErrorInfo),
     #[error("Unable to deserialize response")]
     DeserializationError(SerdeJsonError),
+    #[error("Incoming message is malformed")]
+    MalformedMessage(Message),
 }
 
 

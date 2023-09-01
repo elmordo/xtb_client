@@ -225,9 +225,7 @@ impl ApiWrapper {
             stream_.for_each(|payload| async {
                 match payload {
                     Ok(message) => {
-                        let result = serde_json::to_value(message.to_string())
-                            .map_err(|_| XtbClientError::DeserializationFailed)
-                            .and_then(|val| ResponseInfo::try_from(val).map_err(|_| XtbClientError::DeserializationFailed));
+                        let result = ResponseInfo::try_from(message);
                         match result {
                             Ok(response_info) => {
                                 let lookup = lookup.clone();
@@ -273,8 +271,6 @@ pub enum XtbClientError {
     MessageCannotBeSend(ApiType),
     #[error("Unable to serialize data")]
     SerializationFailed,
-    #[error("Deserialization failed")]
-    DeserializationFailed,
 }
 
 
