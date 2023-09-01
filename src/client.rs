@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
-use futures_util::stream::SplitSink;
+use futures_util::stream::{SplitSink, SplitStream};
 use serde::Serialize;
 use thiserror::Error;
 use tokio::net::TcpStream;
@@ -211,21 +211,51 @@ impl XtbClientBuilder {
 struct ApiWrapper {
     sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     join_handle: JoinHandle<()>,
-    response_sink_lookup: ResponseSinkLookup,
 }
 
 
 impl ApiWrapper {
     fn new(socket: WebSocketStream<MaybeTlsStream<TcpStream>>, response_sink_lookup: ResponseSinkLookup) -> Self {
         let (sink, stream) = socket.split();
+        async fn receiver(
+            stream_: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+            lookup: ResponseSinkLookup,
+        ) {
+            let mut stream_ = stream_;
+            stream_.for_each(|payload| async {
+                match payload {
+                    Ok(message) => {
+                        let result = serde_json::to_value(message.to_string())
+                            .map_err(|_| XtbClientError::DeserializationFailed)
+                            .and_then(|val| ResponseInfo::try_from(val).map_err(|_| XtbClientError::DeserializationFailed));
+                        match result {
+                            Ok(response_info) => {
+                                let lookup = lookup.clone();
+                                let tag = response_info.custom_tag.clone();
+                                let mut guard = lookup.lock().await;
+                                match tag.and_then(|tag| (*guard).get_mut(&tag)) {
+                                    Some(sink) => sink.write(response_info).await,
+                                    _ => ()
+                                };
+                            }
+                            Err(_) => {
+                                // TODO: log error
+                                ()
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        // TODO: log error
+                        ()
+                    }
+                }
+            }).await;
+        }
 
-        async fn receiver() {}
-
-        let join_handle = spawn(receiver());
+        let join_handle = spawn(receiver(stream, response_sink_lookup));
         Self {
             sink,
             join_handle,
-            response_sink_lookup,
         }
     }
 }
@@ -243,6 +273,8 @@ pub enum XtbClientError {
     MessageCannotBeSend(ApiType),
     #[error("Unable to serialize data")]
     SerializationFailed,
+    #[error("Deserialization failed")]
+    DeserializationFailed,
 }
 
 

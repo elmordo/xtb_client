@@ -51,9 +51,10 @@ pub struct ResponseInfo {
 }
 
 
-impl ResponseInfo {
-    /// Construct new `ResponseInfo` from JSON value
-    pub fn new(value: Value) -> Result<Self, ParseResponseError> {
+impl TryFrom<Value> for ResponseInfo {
+    type Error = ParseResponseError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
         let top_level = get_response_top_level_object(&value)?;
         let status = get_response_status_from_top_level_object(top_level)?;
         let custom_tag = get_custom_tag_from_top_level_object(top_level)?;
